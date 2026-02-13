@@ -1,0 +1,39 @@
+# Build artifacts
+*.exe
+*.dll
+*.o
+*.obj
+*.res
+*.log
+*.tmp
+
+# Directories
+proxy_dll/build/
+build/
+
+# Keep the icon
+!mewgenics_icon.ico
+
+# Logs
+hook_log.txt
+*.txt
+
+# User data
+%TEMP%/mewgenics_*
+
+# IDE files
+.vs/
+.vscode/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Game files (don't commit the actual game)
+Mewgenics.exe
+*.pak
+*.pck

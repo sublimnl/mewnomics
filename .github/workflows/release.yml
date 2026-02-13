@@ -1,0 +1,136 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v1.0.0
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Extract version from tag
+      id: version
+      shell: pwsh
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $version = $tag -replace '^v', ''
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "Building version $version"
+
+        # Update launcher_gui.cpp
+        (Get-Content launcher_gui.cpp) -replace '#define CURRENT_VERSION ".*"', "#define CURRENT_VERSION `"$version`"" | Set-Content launcher_gui.cpp
+
+        # Update launcher.rc (FILEVERSION and PRODUCTVERSION)
+        $versionComma = $version -replace '\.', ','
+        (Get-Content launcher.rc) -replace 'FILEVERSION\s+\d+,\d+,\d+,\d+', "FILEVERSION     $versionComma,0" | Set-Content launcher.rc.tmp
+        (Get-Content launcher.rc.tmp) -replace 'PRODUCTVERSION\s+\d+,\d+,\d+,\d+', "PRODUCTVERSION  $versionComma,0" | Set-Content launcher.rc.tmp2
+        (Get-Content launcher.rc.tmp2) -replace '"FileVersion", "[\d\.]+"', "`"FileVersion`", `"$version.0`"" | Set-Content launcher.rc.tmp3
+        (Get-Content launcher.rc.tmp3) -replace '"ProductVersion", "[\d\.]+"', "`"ProductVersion`", `"$version.0`"" | Set-Content launcher.rc
+        Remove-Item launcher.rc.tmp, launcher.rc.tmp2, launcher.rc.tmp3
+
+        echo "Patched version in source files"
+
+    - name: Setup LLVM
+      uses: KyleMayes/install-llvm-action@v1
+      with:
+        version: "17.0"
+        directory: ${{ runner.temp }}/llvm
+
+    - name: Install Make
+      shell: pwsh
+      run: |
+        choco install make -y
+
+    - name: Setup environment
+      shell: pwsh
+      run: |
+        # Update Makefile with correct LLVM path
+        $llvmPath = "${{ runner.temp }}\llvm\bin"
+        (Get-Content Makefile) -replace 'C:\\Program Files\\LLVM\\bin', $llvmPath | Set-Content Makefile
+
+        # Add LLVM to PATH for make
+        echo "$llvmPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build with Make
+      shell: cmd
+      run: |
+        make
+
+    - name: Create release package
+      shell: pwsh
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $zipName = "Mewnomics-v$version.zip"
+
+        # Create release directory
+        New-Item -ItemType Directory -Force -Path release
+
+        # Copy binaries
+        Copy-Item build\Mewnomics.exe release\
+        Copy-Item build\hook.dll release\
+
+        # Create README for release
+        @"
+        # Mewnomics v$version - Installation Instructions
+
+        1. Extract Mewnomics.exe and hook.dll to your Mewgenics installation directory:
+           C:\Program Files (x86)\Steam\steamapps\common\Mewgenics\
+
+        2. Run Mewnomics.exe
+
+        3. Authenticate with your Twitch account
+
+        4. Select which name pools you want to use
+
+        5. Launch and enjoy!
+
+        For full documentation, visit: https://github.com/${{ github.repository }}
+        "@ | Out-File -FilePath release\README.txt -Encoding utf8
+
+        # Create zip
+        Compress-Archive -Path release\* -DestinationPath $zipName
+
+        echo "ZIP_NAME=$zipName" >> $env:GITHUB_OUTPUT
+      id: package
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          Mewnomics-v${{ steps.version.outputs.VERSION }}.zip
+        generate_release_notes: true
+        body: |
+          ## Installation
+          1. Download `Mewnomics-v${{ steps.version.outputs.VERSION }}.zip`
+          2. Extract to your Mewgenics installation directory: `C:\Program Files (x86)\Steam\steamapps\common\Mewgenics\`
+          3. Run `Mewnomics.exe`
+
+          ## Requirements
+          - Windows 10/11
+          - Mewgenics (from Steam)
+          - Twitch account
+
+          ---
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Mewnomics-v${{ steps.version.outputs.VERSION }}
+        path: |
+          build/Mewnomics.exe
+          build/hook.dll
+        retention-days: 90
